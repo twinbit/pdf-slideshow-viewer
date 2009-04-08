@@ -43,18 +43,65 @@ function pdf_slideshow_menu($may_cache) {
 	return $items;
 }
 
-function _convert_pdf_to_images($file, $nid) {
+function _pdf_slideshow_get_path ($file, $nid) {
 	$dest_path = file_create_path(file_directory_path());
 	$dest = realpath($dest_path);
+	//var_dump("$dest_path $dest");
 	$dest .= '/slideshow/'.$nid.'/'.$file->fid;
-	if (file_check_directory($dest, FILE_CREATE_DIRECTORY)) {
+	
+	return $dest;
+}
+
+function _pdf_slideshow_get_rel_path ($file, $nid) {
+	$dest_path = file_create_path(file_directory_path());
+	//$dest = realpath($dest_path);
+	//var_dump("$dest_path $dest");
+	$dest = $dest_path . '/slideshow/'.$nid.'/'.$file->fid;
+
+	return $dest;
+}
+
+
+function _pdf_slideshow_get_file_list ($dir) {
+	$files = scandir($dir);
+	// remove . and ..
+	array_shift($files);
+	array_shift($files);
+	
+	return $files;
+}
+
+
+function _convert_pdf_to_images($file, $nid) {
+	/*
+	$dest_path = file_create_path(file_directory_path());
+	$dest = realpath($dest_path);
+	//var_dump("$dest_path $dest");
+	$dest .= '/slideshow/'.$nid.'/'.$file->fid;
+	*/
+
+	// get destination directory path
+	$dest = _pdf_slideshow_get_path($file, $nid);
+
+	if (is_dir($dest)) return true;
+
+	//var_dump("$dest");
+	//mkdir($dest, 0777, true);
+	//mkdir($dest, 0700, true);
+	//if (file_check_directory($dest, FILE_CREATE_DIRECTORY)) {
+	if (mkdir($dest, 0777, true)) {
 		$source = realpath($file->filepath);
 		$target = $dest.'/'.str_replace('pdf', 'jpg', $file->filename);
-		$convert = variable_get('imagemagick_path', exec('/usr/bin/which convert'));
+		//var_dump($target);
+		$convert = variable_get('imagemagick_path', '/usr/bin/convert');
 		var_dump("$convert $source $target");
-		var_dump(shell_exec("$convert $source $target"));
-		die;
+		if (!shell_exec("$convert $source $target")) {
+			return true;
+		}
+		//die;
 	}
+	rmdir($dest);
+	return false;
 
 }
 
@@ -62,7 +109,13 @@ function node_pdf_slideshow($nid, $fid) {
 	if (is_numeric($nid) && $node = node_load($nid)) {
 		if ($file = $node->files[$fid]) {
 			if ($file->filemime == 'application/pdf') {
-				_convert_pdf_to_images($file, $nid);
+				if (_convert_pdf_to_images($file, $nid)){
+					drupal_set_message(t('Preview generated, click on page numbers'));
+				}
+				else {
+					drupal_set_message(t('Error converting files'));
+				}
+				drupal_goto('node/' . $node->nid);
 			}
 		}
 	} 
@@ -87,15 +140,44 @@ function pdf_slideshow_admin_settings() {
 
 function phptemplate_upload_attachments($files) {
   $node = node_load(arg(1));
-  $header = array(t('Attachment'), t('Size'));
+  $header = array(t('Attachment'), t('Size'), t('Preview'));
   $rows = array();
+
+  $thickbox_enabled = module_exists('thickbox');
+  
   foreach ($files as $file) {
     $file = (object)$file;
     if ($file->list && !$file->remove) {
+	  //var_dump($file);
       // Generate valid URL for both existing attachments and preview of new attachments (these have 'upload' in fid)
       $href = file_create_url((strpos($file->fid, 'upload') === FALSE ? $file->filepath : file_create_filename($file->filename, file_create_path())));
       $text = $file->description ? $file->description : $file->filename;
-      $rows[] = array(l($text, $href), format_size($file->filesize), l(t('View'), 'node/'.$node->nid.'/file/'.$file->fid.'/show'));
+
+	  $target_dir = _pdf_slideshow_get_path($file, $node->nid);
+	  //var_dump($target_dir);
+	  if (is_dir($target_dir)) {
+	  $target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
+	  $target_images  = _pdf_slideshow_get_file_list($target_dir);
+	  
+	  //var_dump($target_images);
+	  //var_dump($target_rel_dir);
+	  $preview_link='';
+	  if ($thickbox_enabled ) {
+		$page = 1;
+		foreach ($target_images as $target_image) {
+			$preview_link .= '<a href="'. check_url(file_create_url($target_rel_dir . '/' . $target_image)) .'" title="'. $file->filename .'" class="thickbox" rel="file_'.$file->fid . '">'.$page.'</a> ';
+			$page++;
+		}
+	  }
+	  }
+	  else {
+		 $preview_link = l(t('Generate preview'), 'node/'.$node->nid.'/file/'.$file->fid.'/show');
+	  }
+	  $rows[] = array(
+		  l($text, $href),
+		  format_size($file->filesize),
+		  $preview_link,
+	  );
     }
   }
   if (count($rows)) {
