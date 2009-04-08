@@ -71,6 +71,15 @@ function _pdf_slideshow_get_file_list ($dir) {
 	return $files;
 }
 
+function _pdf_slideshow_normalize_filenames ($dir, $file) {
+	$filename = substr($file->filename, 0 , -4);
+	for($i = 0; $i < 10; $i++) {
+		if (is_file($dir .'/'. $filename . '-' . $i . '.jpg')) {
+			rename($dir .'/'. $filename . '-' . $i . '.jpg', $dir .'/'. $filename . '-0' . $i . '.jpg');
+		}
+	}
+
+}
 
 function _convert_pdf_to_images($file, $nid) {
 	/*
@@ -91,11 +100,13 @@ function _convert_pdf_to_images($file, $nid) {
 	//if (file_check_directory($dest, FILE_CREATE_DIRECTORY)) {
 	if (mkdir($dest, 0777, true)) {
 		$source = realpath($file->filepath);
-		$target = $dest.'/'.str_replace('pdf', 'jpg', $file->filename);
+		$target = $dest.'/'. str_replace('.pdf', '.jpg', $file->filename);
 		//var_dump($target);
 		$convert = variable_get('imagemagick_path', '/usr/bin/convert');
 		var_dump("$convert $source $target");
 		if (!shell_exec("$convert $source $target")) {
+			// normalize filenames
+			_pdf_slideshow_normalize_filenames($dest, $file);
 			return true;
 		}
 		//die;
@@ -156,23 +167,25 @@ function phptemplate_upload_attachments($files) {
 	  $target_dir = _pdf_slideshow_get_path($file, $node->nid);
 	  //var_dump($target_dir);
 	  if (is_dir($target_dir)) {
-	  $target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
-	  $target_images  = _pdf_slideshow_get_file_list($target_dir);
-	  
-	  //var_dump($target_images);
-	  //var_dump($target_rel_dir);
-	  $preview_link='';
-	  if ($thickbox_enabled ) {
-		$page = 1;
-		foreach ($target_images as $target_image) {
-			$preview_link .= '<a href="'. check_url(file_create_url($target_rel_dir . '/' . $target_image)) .'" title="'. $file->filename .'" class="thickbox" rel="file_'.$file->fid . '">'.$page.'</a> ';
-			$page++;
+			$target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
+			$target_images  = _pdf_slideshow_get_file_list($target_dir);
+
+			//_pdf_slideshow_normalize_filenames($target_dir, $file);
+			//var_dump($target_images);
+			//var_dump($target_rel_dir);
+			$preview_link='';
+			if ($thickbox_enabled ) {
+				$page = 1;
+				foreach ($target_images as $target_image) {
+					$preview_link .= '<a href="'. check_url(file_create_url($target_rel_dir . '/' . $target_image)) .'" title="'. $file->filename .'" class="thickbox" rel="file_'.$file->fid . '">'.$page.'</a> ';
+					$page++;
+				}
+			}
 		}
-	  }
-	  }
 	  else {
-		 $preview_link = l(t('Generate preview'), 'node/'.$node->nid.'/file/'.$file->fid.'/show');
+			$preview_link = l(t('Generate preview'), 'node/'.$node->nid.'/file/'.$file->fid.'/show');
 	  }
+
 	  $rows[] = array(
 		  l($text, $href),
 		  format_size($file->filesize),
