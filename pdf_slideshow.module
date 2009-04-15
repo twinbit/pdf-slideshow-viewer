@@ -1,5 +1,7 @@
 <?php
 
+require_once('file.inc');
+
 /**
  * Implementation of hook_perm()
  */
@@ -11,6 +13,13 @@ function pdf_slideshow_perm() {
  * Implementation of hook_menu()
  */
 function pdf_slideshow_menu($may_cache) {
+	
+	drupal_add_css(drupal_get_path('module', 'pdf_slideshow').'/css/pdf_slideshow.css');
+	drupal_add_js(drupal_get_path('module', 'pdf_slideshow').'/js/jquery.fancybox/jquery.fancybox-1.2.1.pack.js');
+	drupal_add_js(drupal_get_path('module', 'pdf_slideshow').'/js/jquery.fancybox/jquery.easing.1.3.js');
+	drupal_add_css(drupal_get_path('module', 'pdf_slideshow').'/js/jquery.fancybox/jquery.fancybox.css');
+	
+	
 	$items = array();
 	if ($may_cache) {
 		$items[] = array(
@@ -38,6 +47,18 @@ function pdf_slideshow_menu($may_cache) {
 				);
 			}
 		} 
+		if (is_numeric($nid) && is_numeric($fid) && $node = node_load($nid)) {
+			if ($file = $node->files[$fid]) {
+				$items[] = array(
+				  'path' => 'node/'. $node->nid.'/file/'.$fid.'/gallery', 
+				  'title' => t('Gallery view'),
+		          'callback' => 'node_pdf_gallery',
+		          'callback arguments' => array(arg(1), arg(3)),
+		          'access' => node_access('view', $node),
+		          'type' => MENU_CALLBACK
+				);
+			}
+		} 
 			
 	}
 	return $items;
@@ -54,8 +75,6 @@ function _pdf_slideshow_get_path ($file, $nid) {
 
 function _pdf_slideshow_get_rel_path ($file, $nid) {
 	$dest_path = file_create_path(file_directory_path());
-	//$dest = realpath($dest_path);
-	//var_dump("$dest_path $dest");
 	$dest = $dest_path . '/slideshow/'.$nid.'/'.$file->fid;
 
 	return $dest;
@@ -81,45 +100,49 @@ function _pdf_slideshow_normalize_filenames ($dir, $file) {
 
 }
 
-function _convert_pdf_to_images($file, $nid) {
-	/*
-	$dest_path = file_create_path(file_directory_path());
-	$dest = realpath($dest_path);
-	//var_dump("$dest_path $dest");
-	$dest .= '/slideshow/'.$nid.'/'.$file->fid;
-	*/
-
-	// get destination directory path
-	$dest = _pdf_slideshow_get_path($file, $nid);
-
-	if (is_dir($dest)) return true;
-
-	//var_dump("$dest");
-	//mkdir($dest, 0777, true);
-	//mkdir($dest, 0700, true);
-	//if (file_check_directory($dest, FILE_CREATE_DIRECTORY)) {
-	if (mkdir($dest, 0777, true)) {
-		$source = realpath($file->filepath);
-		$target = $dest.'/'. str_replace('.pdf', '.jpg', $file->filename);
-		//var_dump($target);
-		$convert = variable_get('imagemagick_path', '/usr/bin/convert');
-		var_dump("$convert $source $target");
-		if (!shell_exec("$convert $source $target")) {
-			// normalize filenames
-			_pdf_slideshow_normalize_filenames($dest, $file);
-			return true;
-		}
-		//die;
-	}
-	rmdir($dest);
-	return false;
-
+function _get_realpath($filepath) {
+	$base = file_create_path(file_directory_path());
+	return realpath(file_create_path($filepath));
 }
 
+function _convert_pdf_to_images($file, $nid) {
+	// get destination directory path
+	$source = _get_realpath($file->filepath);
+	$dest = _pdf_slideshow_get_path($file, $nid);
+	
+	/* Check if files exists */
+	if (!is_dir($dest) && !_pdf_slideshow_get_file_list($dest)) {	
+		if (mkdir($dest, 0777, TRUE)) {	
+			/* REALLY Crappy code! */
+			$target = $dest.'/'. str_replace('.pdf', '.jpg', $file->filename);		
+			$convert = variable_get('imagemagick_path', '/usr/bin/convert');
+			if (!shell_exec("$convert $source $target")) {
+				// normalize filenames
+				_pdf_slideshow_normalize_filenames($dest, $file);
+				return TRUE;
+			}
+			else {
+				drupal_set_message('Sorry, we have a problem, try to convert again the file.', 'error');
+				return FALSE;
+			}
+		}
+		else {
+			watchdog('pdf_slideshow', 'Error on creating directory for images');
+			rmdir($dest);
+			return FALSE;
+		}
+	}
+	/* It's all OK, go on...*/
+	else {
+		return TRUE;
+	}
+}
+
+/*
 function node_pdf_slideshow($nid, $fid) {
 	if (is_numeric($nid) && $node = node_load($nid)) {
 		if ($file = $node->files[$fid]) {
-			if ($file->filemime == 'application/pdf') {
+			if ($file->filemime == 'application/pdf' || preg_match('/pdf/', $file->filename)) {
 				if (_convert_pdf_to_images($file, $nid)){
 					drupal_set_message(t('Preview generated, click on page numbers'));
 				}
@@ -128,9 +151,180 @@ function node_pdf_slideshow($nid, $fid) {
 				}
 				drupal_goto('node/' . $node->nid);
 			}
+			drupal_set_message(t('File type not supported.'), 'error');
+			drupal_goto('node/' . $node->nid);
 		}
 	} 
 }
+*/
+
+function _handle_position($images) {
+	$max = count($images);
+	//$max--;
+	if (!is_numeric($_GET['position']) || $_GET['position'] < 0 || !$_GET['position']) {
+		return 1;
+	}
+	if ($_GET['position'] > $max) {
+		return $max; 
+	}
+	return $_GET['position'];
+}
+
+function theme_pdf_slideshow_navigator($position, $fragment = 'pdf_preview_box', $counter = 1) {
+	if ($counter > 1) {
+		$output .= '<div class="pdf_navigation">';
+	
+		$output .= '<div style="float: left;">';
+			if ($position > 1) $output .= l(t('< Previous'), $_GET['q'], array(), 'position='.($position ? $prev = $position - 1 : 1), $fragment);
+		$output .= '</div>';
+		
+		$output .= '<div style="float: right;">';
+			if ($position != $counter) $output .= l(t('Next >'), $_GET['q'], array(), 'position='.($position ? $next = $position + 1 : 1), $fragment);
+		$output .= '</div>';
+		
+	$output .= '</div>';
+	return $output;
+	}
+}
+
+function theme_pdf_slideshow($node, $file) {
+	drupal_set_title(l($node->title, 'node/'.$node->nid));
+
+	if (module_exists('euwi_breadcrumb')) {
+		$breadcrumb = init_breadcrumb();	
+		foreach (module_implements('breadcrumb_alter') AS $module) {
+	   		$function = $module .'_breadcrumb_alter';
+	   		$function($breadcrumb, $node, 'node');
+	   	}
+	   	array_pop($breadcrumb);
+	   	array_push($breadcrumb, l($node->title, 'node/'.$node->nid));
+	   	array_push($breadcrumb, t('Document preview'));
+	    drupal_set_breadcrumb($breadcrumb);
+	}
+	
+	
+	$target_dir = _pdf_slideshow_get_path($file, $node->nid);
+	$images = _pdf_slideshow_get_file_list($target_dir);
+	$target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
+	$position = _handle_position($images);
+	$pos_align = ($position - 1);
+	
+	$output .= '<div id="pdf_preview_box">';
+	
+	/* Navigator */
+	$output .= theme('pdf_slideshow_navigator', $position, 'pdf_preview_box', count($images));
+	
+	
+	$output .= theme('image', $target_rel_dir.'/'.$images[$pos_align], array(), array(), array('width' => '600'));
+	
+	/* Navigator */
+	$output .= theme('pdf_slideshow_navigator', $position, 'pdf_preview_box', count($images));
+	
+	$output .= '</div>';
+	
+	$output .= '<div style="text-align: center;">';
+  	$output .= l(t('View as PDF'), file_create_url($file->filepath), array('class' => 'pdf')). ' | ';
+  	$output .= l(t('View as Gallery'), str_replace('show', 'gallery', $_GET['q']));
+	$output .= '</div>';
+	
+	 
+	return $output;	
+}
+
+function node_pdf_slideshow($nid, $fid) {
+	if (is_numeric($nid) && $node = node_load($nid)) {
+		if ($file = $node->files[$fid]) {
+			if ($file->filemime == 'application/pdf' || preg_match('/pdf/', $file->filename)) {
+				if (_convert_pdf_to_images($file, $nid)){
+					return theme('pdf_slideshow', $node, $file);
+				}
+				else {
+					//drupal_set_message(t('Error converting files'));
+					drupal_goto('node/' . $node->nid);
+				}
+			}
+			else {
+				drupal_set_message(t('File type not supported.'), 'error');
+				drupal_goto('node/' . $node->nid);
+			}
+		}
+	} 
+}
+
+
+function theme_pdf_gallery($node, $file) {
+	drupal_set_title(l($node->title, 'node/'.$node->nid));
+
+	if (module_exists('euwi_breadcrumb')) {
+		$breadcrumb = init_breadcrumb();	
+		foreach (module_implements('breadcrumb_alter') AS $module) {
+	   		$function = $module .'_breadcrumb_alter';
+	   		$function($breadcrumb, $node, 'node');
+	   	}
+	   	array_pop($breadcrumb);
+	   	array_push($breadcrumb, l($node->title, 'node/'.$node->nid));
+	   	array_push($breadcrumb, t('Document preview'));
+	    drupal_set_breadcrumb($breadcrumb);
+	}
+	
+	
+	$target_dir = _pdf_slideshow_get_path($file, $node->nid);
+	$images = _pdf_slideshow_get_file_list($target_dir);
+	$target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
+	$position = _handle_position($images);
+	$pos_align = ($position - 1);
+	
+	$output .= '<div id="pdf_preview_gallery" style="height: 600px; overflow: auto;">';
+	
+	foreach($images as $image) {
+		$output .= l(theme('imagecache', 'pdf_gallery_thumb', $target_rel_dir.'/'.$image, array(), array(), array('style' => 'margin-right: 15px;')),
+					 file_create_url($target_rel_dir.'/'.$image), array('class' => 'gallery', 'rel' => 'pdf_gallery'), NULL, NULL, FALSE, TRUE);
+	}
+
+	drupal_add_js('
+		
+	$(document).ready(function() { 
+		/* This is basic - uses default settings */
+		  $("a.gallery").fancybox({ "zoomSpeedIn": 300, "zoomSpeedOut": 300, "overlayShow": false }); 
+	}); 
+	
+	','inline');
+	
+	
+	$output .= '</div>';
+	
+	$output .= '<div style="text-align: center;">';
+  	$output .= l(t('View as PDF'), file_create_url($file->filepath), array('class' => 'pdf')). ' | ';
+  	$output .= l(t('View as Book'), str_replace('gallery', 'show', $_GET['q']));
+	$output .= '</div>';
+	
+	 
+	return $output;	
+}
+
+
+function node_pdf_gallery($nid, $fid) {
+	if (is_numeric($nid) && $node = node_load($nid)) {
+		if ($file = $node->files[$fid]) {
+			if ($file->filemime == 'application/pdf' || preg_match('/pdf/', $file->filename)) {
+				if (_convert_pdf_to_images($file, $nid)){
+					return theme('pdf_gallery', $node, $file);
+				}
+				else {
+					//drupal_set_message(t('Error converting files'));
+					drupal_goto('node/' . $node->nid);
+				}
+			}
+			else {
+				drupal_set_message(t('File type not supported.'), 'error');
+				drupal_goto('node/' . $node->nid);
+			}
+		}
+	} 
+}
+
+
+
 
 function pdf_slideshow_admin_settings() {
 	$form['general'] = array(
@@ -149,6 +343,40 @@ function pdf_slideshow_admin_settings() {
 	return system_settings_form($form);
 }
 
+
+function phptemplate_upload_attachments($files) {
+  $node = node_load(arg(1));
+  $header = array(t('Attachment'), t('Size'), t('Preview'));
+  $rows = array();
+
+  $thickbox_enabled = module_exists('thickbox');
+  
+  foreach ($files as $file) {
+    $file = (object)$file;
+    if ($file->list && !$file->remove) {
+	  //var_dump($file);
+      // Generate valid URL for both existing attachments and preview of new attachments (these have 'upload' in fid)
+      $href = file_create_url((strpos($file->fid, 'upload') === FALSE ? $file->filepath : file_create_filename($file->filename, file_create_path())));
+      $text = $file->description ? $file->description : $file->filename;
+
+	  
+	  $preview_link = l(t('Generate preview'), 'node/'.$node->nid.'/file/'.$file->fid.'/show');
+	  
+
+	  $rows[] = array(
+		  l($text, $href),
+		  format_size($file->filesize),
+		  $preview_link,
+	  );
+    }
+  }
+  if (count($rows)) {
+    return theme('table', $header, $rows, array('id' => 'attachments'));
+  }
+}
+
+
+/*
 function phptemplate_upload_attachments($files) {
   $node = node_load(arg(1));
   $header = array(t('Attachment'), t('Size'), t('Preview'));
@@ -170,9 +398,6 @@ function phptemplate_upload_attachments($files) {
 			$target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
 			$target_images  = _pdf_slideshow_get_file_list($target_dir);
 
-			//_pdf_slideshow_normalize_filenames($target_dir, $file);
-			//var_dump($target_images);
-			//var_dump($target_rel_dir);
 			$preview_link='';
 			if ($thickbox_enabled ) {
 				$page = 1;
@@ -197,6 +422,6 @@ function phptemplate_upload_attachments($files) {
     return theme('table', $header, $rows, array('id' => 'attachments'));
   }
 }
-
+*/
 
 ?>

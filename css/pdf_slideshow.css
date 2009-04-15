@@ -1,0 +1,5 @@
+@CHARSET "UTF-8";
+.pdf {
+	background:transparent url(images/pdf.png) no-repeat scroll left center;
+	padding-left:20px;
+}
