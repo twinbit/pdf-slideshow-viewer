@@ -1,0 +1,127 @@
+<?php
+
+function pdf_converter_conversion_api_service(&$services) {	
+	$services['pdf'] = array('filetype' => 'PDF', /* Doesn't have sense...*/ 
+							 'filemime' => 'application/pdf',
+							 'callback' => 'node_pdf_converter');
+}
+
+
+/**
+ * Implementation of hook_menu()
+ */
+function pdf_converter_menu($may_cache) {
+	$items = array();
+	if ($may_cache) {
+		$items[] = array(
+	      'path' => 'admin/settings/pdfconverter',
+	      'title' => t('PDF Slideshow'),
+	      'description' => t('Configure PDF Converter settings.'),
+	      'callback' => 'drupal_get_form',
+	      'callback arguments' => array('pdf_converter_admin_settings'),
+	      'access' => user_access('administer pdf slideshow'),
+	      'type' => MENU_NORMAL_ITEM,
+	    );
+	}
+	return $items;
+}
+
+
+
+function _pdf_convert_to_images($file, $nid) {
+	// get destination directory path
+	$source = _pdf_converter_get_realpath($file->filepath);
+	$dest = _pdf_converter_get_path($file, $nid);
+	
+	/* Check if files exists */
+	if (!is_dir($dest) && !_pdf_converter_get_file_list($dest)) {	
+		if (mkdir($dest, 0777, TRUE)) {	
+			/* REALLY Crappy code! */
+			$target = $dest.'/'. str_replace('.pdf', '.jpg', $file->filename);		
+			$convert = variable_get('imagemagick_path', '/usr/bin/convert');
+			if (!shell_exec("$convert $source $target")) {
+				// normalize filenames
+				_pdf_converter_normalize_filenames($dest, $file);
+				return TRUE;
+			}
+			else {
+				drupal_set_message('Sorry, we have a problem, try to convert again the file.', 'error');
+				return FALSE;
+			}
+		}
+		else {
+			watchdog('pdf_converter', 'Error on creating directory for images');
+			rmdir($dest);
+			return FALSE;
+		}
+	}
+	/* It's all OK, go on...*/
+	else {
+		return TRUE;
+	}
+}
+
+function _pdf_converter_get_path ($file, $nid) {
+	$dest_path = file_create_path(file_directory_path());
+	$dest = realpath($dest_path);
+	$dest .= '/slideshow/'.$nid.'/'.$file->fid;
+	return $dest;
+}
+
+function _pdf_converter_get_rel_path ($file, $nid) {
+	$dest_path = file_create_path(file_directory_path());
+	$dest = $dest_path . '/slideshow/'.$nid.'/'.$file->fid;
+
+	return $dest;
+}
+
+
+function _pdf_converter_get_file_list ($dir) {
+	$files = scandir($dir);
+	// remove . and ..
+	array_shift($files);
+	array_shift($files);
+	
+	return $files;
+}
+
+function _pdf_converter_normalize_filenames ($dir, $file) {
+	$filename = substr($file->filename, 0 , -4);
+	for($i = 0; $i < 10; $i++) {
+		if (is_file($dir .'/'. $filename . '-' . $i . '.jpg')) {
+			rename($dir .'/'. $filename . '-' . $i . '.jpg', $dir .'/'. $filename . '-0' . $i . '.jpg');
+		}
+	}
+
+}
+
+function _pdf_converter_get_realpath($filepath) {
+	$base = file_create_path(file_directory_path());
+	return realpath(file_create_path($filepath));
+}
+
+function node_pdf_converter($nid, $fid) {
+	//die('sono qui');
+	if (is_numeric($nid) && $node = node_load($nid)) {
+		if ($file = $node->files[$fid]) {
+			if ($file->filemime == 'application/pdf' || preg_match('/pdf/', $file->filename)) {
+				if (_pdf_convert_to_images($file, $nid)){
+					//return theme('pdf_converter', $node, $file);
+					return array('path' => _pdf_converter_get_path($file, $nid), 
+								 'rel_path' => _pdf_converter_get_rel_path($file, $nid));
+				}
+				else {
+					//drupal_set_message(t('Error converting files'));
+					drupal_goto('node/' . $node->nid);
+				}
+			}
+			else {
+				drupal_set_message(t('File type not supported.'), 'error');
+				drupal_goto('node/' . $node->nid);
+			}
+		}
+	} 
+}
+
+
+?>

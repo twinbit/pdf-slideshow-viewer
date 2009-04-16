@@ -1,3 +1,4 @@
 name = PDF Slideshow
 description = Simple PDF to images viewer
 package = Twinbit
+dependencies = convert_api

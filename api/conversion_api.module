@@ -1,0 +1,115 @@
+<?php
+
+/*
+ * Implement of hook_perm()
+ * 
+ */
+function conversion_api_perm() {
+	return  array('administer conversion api');
+}
+
+/*
+ * 
+ *  Implementation of hook_menu()
+ */
+function conversion_api_menu($may_cache) {	
+	$items = array();
+	if ($may_cache) {
+		$items[] = array(
+	      'path' => 'admin/settings/conversionapi',
+	      'title' => t('Conversion API'),
+	      'description' => t('Conversion API settings.'),
+	      'callback' => 'drupal_get_form',
+	      'callback arguments' => array('conversion_api_admin_settings'),
+	      'access' => user_access('administer conversion api'),
+	      'type' => MENU_NORMAL_ITEM,
+	    );
+	}		
+	return $items;
+}
+
+function conversion_api_query_services() {
+	$services = array();
+	foreach (module_implements('conversion_api_service') AS $module) {
+      		$function = $module .'_conversion_api_service';
+      		$function($services);
+    }
+    return $services;
+}
+
+function theme_conversion_api_services($services) {
+	$output = '';
+	$output .= '<div class="conversion_api_services">';
+	$output .= '<h3>'. t('Converters available.').'</h3>';
+	$output .= '<ul>';
+		foreach ($services as $service) {
+			$output .= '<li>';
+			$output .=  $service['filetype'].' ( '. $service['filemime'].' ) ';
+			$output .= '</li>';
+		}
+	$output .= '</ul>';
+	$output .= '</div>';
+	return $output;
+}
+
+function conversion_api_admin_settings() {
+	$form['general'] = array(
+	    '#type' => 'fieldset',
+	    '#title' => t('General settings'),
+	    '#collapsible' => TRUE,
+	    '#collapsed' => FALSE,
+	);
+	
+	$form['general']['supported_service'] = array(
+		'#value' => theme('conversion_api_services', conversion_api_query_services())
+	);
+	
+	return system_settings_form($form);
+}
+
+/*
+ * 
+ * 
+ */
+function conversion_api_check_mimetype($file) {
+	/* Try using the OS for retrieve the mimetype */
+	exec('file -b --mime-type '.realpath(file_create_path($file->filepath)), $out);
+	if (!$out && isset($file->filemime)) {
+		return $file->filemime;
+	}
+	else {
+		return array_pop($out);
+	}
+}
+
+function conversion_api_query_service($file, $nid, $mimetype) {
+	$services = conversion_api_query_services();
+	foreach ($services as $service) {
+		if ($mimetype == $service['filemime']) {
+			$function = $service['callback'];
+			return $function($file, $nid);
+		}
+	}
+	
+}
+
+function convert_api_file_list($dir) {
+	$files = scandir($dir);
+	// remove . and ..
+	array_shift($files);
+	array_shift($files);
+	
+	return $files;
+}
+
+function conversion_api($file, $nid) {
+	$mimetype = conversion_api_check_mimetype($file);
+	if (!$res =  conversion_api_query_service($nid, $file->fid, $mimetype)) {
+		return FALSE;
+	}
+	else {
+		return $res;
+	}
+}
+
+?>

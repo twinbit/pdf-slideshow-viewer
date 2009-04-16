@@ -20,6 +20,7 @@ function pdf_slideshow_menu($may_cache) {
 	drupal_add_css(drupal_get_path('module', 'pdf_slideshow').'/js/jquery.fancybox/jquery.fancybox.css');
 	
 	
+	
 	$items = array();
 	if ($may_cache) {
 		$items[] = array(
@@ -64,79 +65,7 @@ function pdf_slideshow_menu($may_cache) {
 	return $items;
 }
 
-function _pdf_slideshow_get_path ($file, $nid) {
-	$dest_path = file_create_path(file_directory_path());
-	$dest = realpath($dest_path);
-	//var_dump("$dest_path $dest");
-	$dest .= '/slideshow/'.$nid.'/'.$file->fid;
-	
-	return $dest;
-}
 
-function _pdf_slideshow_get_rel_path ($file, $nid) {
-	$dest_path = file_create_path(file_directory_path());
-	$dest = $dest_path . '/slideshow/'.$nid.'/'.$file->fid;
-
-	return $dest;
-}
-
-
-function _pdf_slideshow_get_file_list ($dir) {
-	$files = scandir($dir);
-	// remove . and ..
-	array_shift($files);
-	array_shift($files);
-	
-	return $files;
-}
-
-function _pdf_slideshow_normalize_filenames ($dir, $file) {
-	$filename = substr($file->filename, 0 , -4);
-	for($i = 0; $i < 10; $i++) {
-		if (is_file($dir .'/'. $filename . '-' . $i . '.jpg')) {
-			rename($dir .'/'. $filename . '-' . $i . '.jpg', $dir .'/'. $filename . '-0' . $i . '.jpg');
-		}
-	}
-
-}
-
-function _get_realpath($filepath) {
-	$base = file_create_path(file_directory_path());
-	return realpath(file_create_path($filepath));
-}
-
-function _convert_pdf_to_images($file, $nid) {
-	// get destination directory path
-	$source = _get_realpath($file->filepath);
-	$dest = _pdf_slideshow_get_path($file, $nid);
-	
-	/* Check if files exists */
-	if (!is_dir($dest) && !_pdf_slideshow_get_file_list($dest)) {	
-		if (mkdir($dest, 0777, TRUE)) {	
-			/* REALLY Crappy code! */
-			$target = $dest.'/'. str_replace('.pdf', '.jpg', $file->filename);		
-			$convert = variable_get('imagemagick_path', '/usr/bin/convert');
-			if (!shell_exec("$convert $source $target")) {
-				// normalize filenames
-				_pdf_slideshow_normalize_filenames($dest, $file);
-				return TRUE;
-			}
-			else {
-				drupal_set_message('Sorry, we have a problem, try to convert again the file.', 'error');
-				return FALSE;
-			}
-		}
-		else {
-			watchdog('pdf_slideshow', 'Error on creating directory for images');
-			rmdir($dest);
-			return FALSE;
-		}
-	}
-	/* It's all OK, go on...*/
-	else {
-		return TRUE;
-	}
-}
 
 /*
 function node_pdf_slideshow($nid, $fid) {
@@ -187,7 +116,7 @@ function theme_pdf_slideshow_navigator($position, $fragment = 'pdf_preview_box',
 	}
 }
 
-function theme_pdf_slideshow($node, $file) {
+function theme_pdf_slideshow($node, $file, $ret) {
 	drupal_set_title(l($node->title, 'node/'.$node->nid));
 
 	if (module_exists('euwi_breadcrumb')) {
@@ -203,9 +132,9 @@ function theme_pdf_slideshow($node, $file) {
 	}
 	
 	
-	$target_dir = _pdf_slideshow_get_path($file, $node->nid);
-	$images = _pdf_slideshow_get_file_list($target_dir);
-	$target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
+	$target_dir = $ret['path'];
+	$images = convert_api_file_list($target_dir);
+	$target_rel_dir = $ret['rel_path'];
 	$position = _handle_position($images);
 	$pos_align = ($position - 1);
 	
@@ -216,6 +145,7 @@ function theme_pdf_slideshow($node, $file) {
 	
 	
 	$output .= theme('image', $target_rel_dir.'/'.$images[$pos_align], array(), array(), array('width' => '600'));
+	//var_dump($output); die;
 	
 	/* Navigator */
 	$output .= theme('pdf_slideshow_navigator', $position, 'pdf_preview_box', count($images));
@@ -231,28 +161,9 @@ function theme_pdf_slideshow($node, $file) {
 	return $output;	
 }
 
-function node_pdf_slideshow($nid, $fid) {
-	if (is_numeric($nid) && $node = node_load($nid)) {
-		if ($file = $node->files[$fid]) {
-			if ($file->filemime == 'application/pdf' || preg_match('/pdf/', $file->filename)) {
-				if (_convert_pdf_to_images($file, $nid)){
-					return theme('pdf_slideshow', $node, $file);
-				}
-				else {
-					//drupal_set_message(t('Error converting files'));
-					drupal_goto('node/' . $node->nid);
-				}
-			}
-			else {
-				drupal_set_message(t('File type not supported.'), 'error');
-				drupal_goto('node/' . $node->nid);
-			}
-		}
-	} 
-}
 
 
-function theme_pdf_gallery($node, $file) {
+function theme_pdf_gallery($node, $file, $ret) {
 	drupal_set_title(l($node->title, 'node/'.$node->nid));
 
 	if (module_exists('euwi_breadcrumb')) {
@@ -268,12 +179,11 @@ function theme_pdf_gallery($node, $file) {
 	}
 	
 	
-	$target_dir = _pdf_slideshow_get_path($file, $node->nid);
-	$images = _pdf_slideshow_get_file_list($target_dir);
-	$target_rel_dir = _pdf_slideshow_get_rel_path($file, $node->nid);
+	$target_dir = $ret['path'];
+	$images = convert_api_file_list($target_dir);
+	$target_rel_dir = $ret['rel_path'];
 	$position = _handle_position($images);
 	$pos_align = ($position - 1);
-	
 	$output .= '<div id="pdf_preview_gallery" style="height: 600px; overflow: auto;">';
 	
 	foreach($images as $image) {
@@ -303,25 +213,41 @@ function theme_pdf_gallery($node, $file) {
 }
 
 
-function node_pdf_gallery($nid, $fid) {
+function node_pdf_slideshow($nid, $fid) {
 	if (is_numeric($nid) && $node = node_load($nid)) {
 		if ($file = $node->files[$fid]) {
-			if ($file->filemime == 'application/pdf' || preg_match('/pdf/', $file->filename)) {
-				if (_convert_pdf_to_images($file, $nid)){
-					return theme('pdf_gallery', $node, $file);
-				}
-				else {
-					//drupal_set_message(t('Error converting files'));
-					drupal_goto('node/' . $node->nid);
-				}
+			if ($res = conversion_api($file, $nid)) { 
+				return theme('pdf_slideshow', $node, $file, $res);
 			}
 			else {
-				drupal_set_message(t('File type not supported.'), 'error');
+				drupal_set_message(t('Error on conversion, please try again.'));
 				drupal_goto('node/' . $node->nid);
 			}
 		}
+		else {
+			drupal_goto('node/' . $node->nid);
+		}
 	} 
 }
+
+function node_pdf_gallery($nid, $fid) {
+	if (is_numeric($nid) && $node = node_load($nid)) {
+		if ($file = $node->files[$fid]) {
+			if ($res = conversion_api($file, $nid)) { 
+				return theme('pdf_gallery', $node, $file, $res);
+			}
+			else {
+				drupal_set_message(t('Error on conversion, please try again.'));
+				drupal_goto('node/' . $node->nid);
+			}
+		}
+		else {
+			drupal_goto('node/' . $node->nid);
+		}
+	} 
+}
+
+
 
 
 
@@ -348,20 +274,15 @@ function phptemplate_upload_attachments($files) {
   $node = node_load(arg(1));
   $header = array(t('Attachment'), t('Size'), t('Preview'));
   $rows = array();
-
-  $thickbox_enabled = module_exists('thickbox');
-  
+ 
   foreach ($files as $file) {
     $file = (object)$file;
     if ($file->list && !$file->remove) {
-	  //var_dump($file);
       // Generate valid URL for both existing attachments and preview of new attachments (these have 'upload' in fid)
       $href = file_create_url((strpos($file->fid, 'upload') === FALSE ? $file->filepath : file_create_filename($file->filename, file_create_path())));
       $text = $file->description ? $file->description : $file->filename;
-
 	  
-	  $preview_link = l(t('Generate preview'), 'node/'.$node->nid.'/file/'.$file->fid.'/show');
-	  
+	  $preview_link = l(t('Preview'), 'node/'.$node->nid.'/file/'.$file->fid.'/show');
 
 	  $rows[] = array(
 		  l($text, $href),
